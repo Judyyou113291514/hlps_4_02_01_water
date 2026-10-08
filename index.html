@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>水域環境拖曳配對大挑戰</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f0f9ff;
+            background-image: radial-gradient(circle at top right, #e0f2fe, #bae6fd);
+            min-height: 100vh;
+            margin: 0;
+            overflow-x: hidden;
+            /* 預防觸控時不小心選取文字 */
+            user-select: none; 
+            -webkit-user-select: none;
+        }
+
+        /* 自訂動畫：錯誤時的震動 */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-6px); }
+            40%, 80% { transform: translateX(6px); }
+        }
+        .animate-shake {
+            animation: shake 0.4s ease-in-out;
+            border-color: #ef4444 !important; /* red-500 */
+            background-color: #fee2e2 !important; /* red-100 */
+        }
+
+        /* 自訂動畫：正確放上時的彈現 */
+        @keyframes popIn {
+            0% { transform: scale(0.8); opacity: 0; }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-popIn {
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        /* 自訂動畫：選取時的光暈脈動 */
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5); }
+            50% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
+        }
+        .selected-card {
+            border-color: #3b82f6 !important; /* blue-500 */
+            background-color: #eff6ff !important; /* blue-50 */
+            transform: scale(1.03);
+            animation: pulseGlow 1.5s infinite;
+            z-index: 10;
+        }
+
+        /* 隱藏捲軸但保持可捲動 (針對手機版拖曳區) */
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* 確保多行文字可以正確顯示換行 */
+        .whitespace-pre-line {
+            white-space: pre-line;
+        }
+    </style>
+</head>
+<body class="py-6 px-3 md:px-6 text-gray-800 flex flex-col items-center">
+
+    <div class="max-w-6xl w-full">
+        <!-- 標題與進度區 -->
+        <header class="text-center mb-6">
+            <h1 class="text-3xl md:text-4xl font-black text-blue-900 mb-3 drop-shadow-sm flex justify-center items-center gap-2">
+                🌊 水域環境大挑戰 🐟
+            </h1>
+            
+            <div class="flex flex-col md:flex-row justify-center items-center gap-3">
+                <div class="bg-white px-5 py-2 rounded-full shadow flex items-center gap-3 border-2 border-blue-100">
+                    <span class="font-bold text-gray-500">關卡進度</span>
+                    <div class="flex gap-1" id="progress-dots">
+                        <!-- 進度點點由 JS 渲染 -->
+                    </div>
+                    <span class="font-bold text-blue-700 ml-2" id="stage-counter">1 / 6</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- 遊戲主要區域 (左右兩欄佈局) -->
+        <div class="bg-white/80 backdrop-blur rounded-3xl shadow-xl p-4 md:p-6 border border-white">
+            
+            <!-- 關卡指示 -->
+            <div class="text-center mb-6">
+                <h2 class="text-2xl font-bold text-teal-700 mb-1" id="stage-title">關卡名稱</h2>
+                <p class="text-gray-600 font-medium bg-teal-50 inline-block px-4 py-1 rounded-full border border-teal-100">
+                    💡 操作提示：點擊下方卡片再點擊目標空格，或是直接「拖曳」卡片進空格！
+                </p>
+            </div>
+
+            <div class="flex flex-col lg:flex-row gap-6 lg:gap-8">
+                
+                <!-- 左側/上方：放置區 (Drop Zones) -->
+                <div class="w-full lg:w-3/5 flex flex-col gap-3" id="slots-container">
+                    <!-- 空格由 JS 渲染 -->
+                </div>
+
+                <!-- 右側/下方：拖曳卡片區 (Drag Bank) -->
+                <div class="w-full lg:w-2/5 flex flex-col border-t-4 lg:border-t-0 lg:border-l-4 border-dashed border-blue-200 pt-4 lg:pt-0 lg:pl-6">
+                    <h3 class="text-lg font-bold text-blue-800 mb-3 flex items-center gap-2">
+                        <span>📦</span> 待配對卡片區
+                    </h3>
+                    
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3 max-h-[500px] overflow-y-auto pr-2 pb-4 hide-scrollbar" id="bank-container">
+                        <!-- 卡片由 JS 渲染 -->
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- 過關彈跳視窗 -->
+    <div id="stage-complete-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+        <div class="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full text-center transform scale-100 animate-popIn border-4 border-teal-400">
+            <div class="text-6xl mb-4">🌟</div>
+            <h2 class="text-3xl font-black text-teal-800 mb-2">本關完成！</h2>
+            <p class="text-lg text-gray-600 mb-6 font-medium">你已成功配對所有特徵</p>
+            <button id="next-stage-btn" class="w-full bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-600 hover:to-emerald-600 text-white font-bold py-4 px-6 rounded-2xl shadow-lg hover:shadow-xl active:scale-95 transition-all text-xl">
+                進入下一關 🚀
+            </button>
+        </div>
+    </div>
+
+    <div id="game-win-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
+        <div class="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full text-center transform scale-100 border-4 border-yellow-400">
+            <div class="text-7xl mb-4 animate-bounce">🏆</div>
+            <h2 class="text-4xl font-black text-blue-900 mb-2">恭喜完全破關！</h2>
+            <p class="text-xl text-gray-600 mb-8 font-medium line-height-relaxed">
+                你已經精通了所有的水域環境特徵！<br>是個名副其實的生態大師！
+            </p>
+            <button id="restart-btn" class="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-4 px-8 rounded-2xl shadow-lg hover:shadow-xl active:scale-95 transition-all text-xl w-full">
+                再挑戰一次
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // 固定的【水域環境】基準
+        const environments = [
+            { id: 'env-1', name: '靜水水域', emoji: '🐸' },
+            { id: 'env-2', name: '流動水域', emoji: '🐟' },
+            { id: 'env-3', name: '河口水域', emoji: '🦀' },
+            { id: 'env-4', name: '潮間帶', emoji: '🐚' },
+            { id: 'env-5', name: '近海區', emoji: '🐢' },
+            { id: 'env-6', name: '遠洋區', emoji: '🐋' }
+        ];
+
+        // 關卡資料定義 (嚴格對應 prompts 內容)
+        const gameData = [
+            {
+                stageTitle: "第一關：生態系大類",
+                answers: [
+                    "淡水生態系", // 對應：靜水
+                    "淡水生態系", // 對應：流動
+                    "河口生態系", // 對應：河口
+                    "海洋生態系", // 對應：潮間帶
+                    "海洋生態系", // 對應：近海
+                    "海洋生態系"  // 對應：遠洋
+                ]
+            },
+            {
+                stageTitle: "第二關：水質與營養物質",
+                answers: [
+                    "水質：淡水\n營養物質：多",
+                    "水質：淡水\n營養物質：少",
+                    "水質：淡、海水混和\n營養物質：豐富",
+                    "水質：海水\n營養物質：多 (定時受潮汐影響)",
+                    "水質：海水\n營養物質：多 (陽光充足)",
+                    "水質：海水\n營養物質：少 (營養鹽易沉降海底)"
+                ]
+            },
+            {
+                stageTitle: "第三關：範圍與特色",
+                answers: [
+                    "湖泊、池塘。\n水流靜止或緩慢，透光度隨深度遞減。",
+                    "河川、溪流。\n水流湍急，溶氧量高，但營養鹽不易累積。",
+                    "沼澤、河口。\n環境變動大（鹽度、水位隨潮汐變化），泥沙淤積富含有機物。",
+                    "海陸交界處（最高潮線與最低潮線之間）。\n定時被海水淹沒與暴露於空氣中。",
+                    "潮間帶以下至 200 公尺深的大陸棚。\n陽光充足，是海洋生物最繁盛的區域。",
+                    "水深超過 200 公尺的開闊水域。\n分為透光區與黑暗區，環境廣大。"
+                ]
+            },
+            {
+                stageTitle: "第四關：植物代表",
+                answers: [
+                    "以浮游藻類為主。\n（如：布袋蓮、睡蓮、浮萍）",
+                    "以固著性藻類、兩岸掉落的殘枝落葉為主。",
+                    "種類較少，但族群數量多。\n（如：紅樹林的水筆仔、海茄苳）",
+                    "大型海藻。\n（如：石蓴、昆布）",
+                    "種類、數量多。\n（如：大型海藻、浮游植物）",
+                    "透光區有藻類，黑暗區極少。\n（如：浮游微藻）"
+                ]
+            },
+            {
+                stageTitle: "第五關：動物代表",
+                answers: [
+                    "各類型消費者。\n（如：青蛙、螺類、蜻蜓幼蟲、草魚）",
+                    "種類和數量都較少。\n（如：櫻花鉤吻鮭、石賓、渦蟲、水毛翅）",
+                    "各類型消費者。\n（如：招潮蟹、彈塗魚、牡蠣、候鳥）",
+                    "各類型消費者。\n（如：藤壺、海星、海葵、寄居蟹）",
+                    "種類、數量多。\n（如：珊瑚、海龜、熱帶魚類、鯊魚）",
+                    "各類型消費者。\n（透光區：鯨魚、鮪魚）\n（黑暗區：深海鮟鱇魚、巨烏賊）"
+                ]
+            },
+            {
+                stageTitle: "第六關：如何適應環境 (適應機制)",
+                answers: [
+                    "植物：常有氣室增加浮力，或發展出浮水葉。\n動物：適應靜止水域，底棲生物能適應低溶氧。",
+                    "植物：藻類需緊緊附著於石頭以免被沖走。\n動物：具流線型身體減少阻力，或具吸盤/鉤爪固定在岩石上。",
+                    "植物：發展出支持根、呼吸根與胎生苗。\n動物：能忍受鹽度大幅變化，如彈塗魚能保持鰓部濕潤在泥灘活動。",
+                    "必須適應潮汐變化與海浪衝擊。\n常具有堅硬外殼防水分散失，或分泌黏液/管足緊附礁石。",
+                    "利用充足陽光行光合作用；\n珊瑚礁提供豐富躲藏空間，演化出多樣偽裝、共生關係（如小丑魚與海葵）。",
+                    "透光區：多具備流線型身體以利長途游泳，背暗腹白有利隱蔽。\n黑暗區：適應高壓無光，演化出發光器、巨大的嘴巴和可擴張的胃以吞下稀少獵物。"
+                ]
+            }
+        ];
+
+        // 狀態變數
+        let currentStage = 0;
+        let filledSlots = Array(6).fill(null); // 紀錄6個位置放入的字串
+        let bankCards = []; // 目前卡片庫剩下的卡片
+        let selectedCardIndex = null; // 手機點擊選取模式用的索引
+
+        // DOM 元素參考
+        const stageTitleEl = document.getElementById('stage-title');
+        const slotsContainerEl = document.getElementById('slots-container');
+        const bankContainerEl = document.getElementById('bank-container');
+        const progressDotsEl = document.getElementById('progress-dots');
+        const stageCounterEl = document.getElementById('stage-counter');
+        const stageCompleteModal = document.getElementById('stage-complete-modal');
+        const gameWinModal = document.getElementById('game-win-modal');
+
+        // 初始化遊戲
+        function initGame() {
+            currentStage = 0;
+            hideModal(gameWinModal);
+            loadStage();
+        }
+
+        // 載入指定關卡
+        function loadStage() {
+            // 重置狀態
+            filledSlots = Array(6).fill(null);
+            selectedCardIndex = null;
+            
+            // 建立打亂的卡片庫
+            const currentAnswers = gameData[currentStage].answers;
+            bankCards = currentAnswers.map((text, index) => ({ id: `card-${index}`, text: text }));
+            shuffleArray(bankCards);
+
+            // 更新 UI
+            stageTitleEl.innerText = gameData[currentStage].stageTitle;
+            stageCounterEl.innerText = `${currentStage + 1} / 6`;
+            updateProgressDots();
+            
+            renderSlots();
+            renderBank();
+        }
+
+        // 洗牌演算法
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        // 更新頂部進度點點
+        function updateProgressDots() {
+            progressDotsEl.innerHTML = '';
+            for (let i = 0; i < 6; i++) {
+                const dot = document.createElement('div');
+                dot.className = `w-3 h-3 rounded-full transition-colors ${i < currentStage ? 'bg-teal-400' : (i === currentStage ? 'bg-blue-600 ring-2 ring-blue-200' : 'bg-gray-200')}`;
+                progressDotsEl.appendChild(dot);
+            }
+        }
+
+        // 渲染放置區
+        function renderSlots() {
+            slotsContainerEl.innerHTML = '';
+            
+            environments.forEach((env, index) => {
+                const isFilled = filledSlots[index] !== null;
+                const slotContent = isFilled ? filledSlots[index] : '';
+
+                // 建立外層列
+                const rowEl = document.createElement('div');
+                rowEl.className = "flex items-stretch bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden";
+                
+                // 左側固定環境名稱
+                const labelEl = document.createElement('div');
+                labelEl.className = "w-1/3 md:w-1/4 bg-blue-50 text-blue-900 font-bold p-3 flex flex-col items-center justify-center border-r border-blue-100 text-center";
+                labelEl.innerHTML = `<span class="text-2xl mb-1">${env.emoji}</span><span>${env.name}</span>`;
+                
+                // 右側 Drop Zone
+                const dropZoneEl = document.createElement('div');
+                dropZoneEl.className = `w-2/3 md:w-3/4 p-2 transition-all duration-300 flex items-center justify-center min-h-[80px]
+                    ${isFilled ? 'bg-green-50 border-2 border-green-400 cursor-default' : 'bg-gray-50 border-2 border-dashed border-gray-300 cursor-pointer hover:bg-blue-50'}`;
+                dropZoneEl.dataset.slotIndex = index;
+                
+                // 設定事件 (點擊與拖曳)
+                if (!isFilled) {
+                    dropZoneEl.onclick = () => handleSlotClick(index);
+                    dropZoneEl.ondragover = (e) => handleDragOver(e, dropZoneEl);
+                    dropZoneEl.ondragleave = (e) => handleDragLeave(e, dropZoneEl);
+                    dropZoneEl.ondrop = (e) => handleDrop(e, index);
+                }
+
+                // 內部文字渲染
+                if (isFilled) {
+                    dropZoneEl.innerHTML = `
+                        <div class="relative w-full h-full flex items-center justify-center p-2 animate-popIn">
+                            <span class="absolute top-1 right-1 text-green-500">✅</span>
+                            <span class="text-gray-800 font-medium whitespace-pre-line text-sm md:text-base leading-relaxed text-center">
+                                ${slotContent}
+                            </span>
+                        </div>
+                    `;
+                } else {
+                    dropZoneEl.innerHTML = `<span class="text-gray-400 font-medium text-sm">將卡片放置於此</span>`;
+                }
+
+                rowEl.appendChild(labelEl);
+                rowEl.appendChild(dropZoneEl);
+                slotsContainerEl.appendChild(rowEl);
+            });
+        }
+
+        // 渲染卡片庫
+        function renderBank() {
+            bankContainerEl.innerHTML = '';
+            
+            if (bankCards.length === 0) {
+                bankContainerEl.innerHTML = `
+                    <div class="w-full h-full min-h-[200px] flex items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-gray-50 text-gray-400 font-bold">
+                        卡片已全數配對完成！
+                    </div>
+                `;
+                return;
+            }
+
+            bankCards.forEach((card, index) => {
+                const isSelected = selectedCardIndex === index;
+                
+                const cardEl = document.createElement('div');
+                cardEl.className = `p-4 bg-white rounded-xl border-2 shadow-sm cursor-pointer transition-all duration-200 select-none flex items-center justify-center min-h-[80px]
+                    ${isSelected ? 'selected-card' : 'border-blue-200 hover:border-blue-400 hover:shadow-md hover:-translate-y-1'}`;
+                
+                // 允許拖曳
+                cardEl.draggable = true;
+                
+                // 事件綁定
+                cardEl.onclick = () => handleCardClick(index);
+                cardEl.ondragstart = (e) => handleDragStart(e, index);
+                cardEl.ondragend = () => { selectedCardIndex = null; renderBank(); };
+
+                cardEl.innerHTML = `
+                    <span class="text-gray-800 font-medium whitespace-pre-line text-sm md:text-base leading-relaxed text-center w-full">
+                        ${card.text}
+                    </span>
+                `;
+                
+                bankContainerEl.appendChild(cardEl);
+            });
+        }
+
+        // === 點擊模式邏輯 ===
+        function handleCardClick(index) {
+            // 如果點擊同一個，就取消選取；否則選取新的
+            if (selectedCardIndex === index) {
+                selectedCardIndex = null;
+            } else {
+                selectedCardIndex = index;
+            }
+            renderBank();
+        }
+
+        function handleSlotClick(slotIndex) {
+            if (selectedCardIndex === null) return; // 沒選卡片直接點空格，不反應
+            
+            // 嘗試配對
+            attemptMatch(selectedCardIndex, slotIndex);
+        }
+
+        // === 拖曳模式邏輯 ===
+        function handleDragStart(e, cardIndex) {
+            selectedCardIndex = cardIndex; // 為了相容邏輯，也設定這個
+            e.dataTransfer.setData('text/plain', cardIndex.toString());
+            // 稍微微調外觀
+            setTimeout(() => { renderBank(); }, 0);
+        }
+
+        function handleDragOver(e, element) {
+            e.preventDefault(); // 必須呼叫才能允許 drop
+            element.classList.add('bg-blue-100');
+            element.classList.remove('bg-gray-50');
+            element.classList.add('border-blue-400');
+            element.classList.remove('border-gray-300');
+        }
+
+        function handleDragLeave(e, element) {
+            element.classList.remove('bg-blue-100');
+            element.classList.add('bg-gray-50');
+            element.classList.remove('border-blue-400');
+            element.classList.add('border-gray-300');
+        }
+
+        function handleDrop(e, slotIndex) {
+            e.preventDefault();
+            const cardIndexStr = e.dataTransfer.getData('text/plain');
+            if (!cardIndexStr) return;
+            
+            const cardIndex = parseInt(cardIndexStr, 10);
+            attemptMatch(cardIndex, slotIndex);
+        }
+
+        // 核心判斷邏輯
+        function attemptMatch(cardIndex, slotIndex) {
+            const card = bankCards[cardIndex];
+            const expectedText = gameData[currentStage].answers[slotIndex];
+
+            // 判斷是否正確：只要文字完全一致即算正確 (這能完美處理"海洋生態系"這種重複答案)
+            if (card.text === expectedText) {
+                // 答對了！
+                filledSlots[slotIndex] = card.text;
+                // 從牌庫移除
+                bankCards.splice(cardIndex, 1);
+                selectedCardIndex = null; // 清除選取狀態
+                
+                renderSlots();
+                renderBank();
+
+                checkStageComplete();
+            } else {
+                // 答錯了！
+                triggerErrorAnimation(slotIndex);
+                selectedCardIndex = null; // 答錯後取消選取
+                renderBank();
+            }
+        }
+
+        function triggerErrorAnimation(slotIndex) {
+            // 取得對應的空格 DOM 並加入震動 class
+            const slots = slotsContainerEl.children;
+            if(slots[slotIndex]) {
+                const dropZone = slots[slotIndex].children[1]; // 右側區域
+                dropZone.classList.add('animate-shake');
+                
+                // 震動結束後移除 class
+                setTimeout(() => {
+                    dropZone.classList.remove('animate-shake');
+                    // 同時恢復原本的顏色，避免拖曳 leave 時被卡住
+                    dropZone.classList.remove('bg-blue-100', 'border-blue-400');
+                    dropZone.classList.add('bg-gray-50', 'border-gray-300');
+                }, 400);
+            }
+        }
+
+        function checkStageComplete() {
+            // 如果這關 6 個位置都填滿了
+            if (filledSlots.every(slot => slot !== null)) {
+                setTimeout(() => {
+                    if (currentStage === gameData.length - 1) {
+                        // 全破
+                        showModal(gameWinModal);
+                        launchConfetti(); // 簡單的彩帶特效
+                    } else {
+                        // 下一關
+                        showModal(stageCompleteModal);
+                    }
+                }, 500); // 延遲一下讓玩家看清楚最後一個勾勾
+            }
+        }
+
+        // 彈跳視窗控制
+        function showModal(modalEl) {
+            modalEl.classList.remove('hidden');
+        }
+        function hideModal(modalEl) {
+            modalEl.classList.add('hidden');
+        }
+
+        // 綁定按鈕事件
+        document.getElementById('next-stage-btn').addEventListener('click', () => {
+            hideModal(stageCompleteModal);
+            currentStage++;
+            loadStage();
+        });
+
+        document.getElementById('restart-btn').addEventListener('click', () => {
+            hideModal(gameWinModal);
+            initGame();
+        });
+
+        // 啟動遊戲
+        window.onload = initGame;
+
+        // 簡單的Emoji掉落慶祝動畫 (全破時)
+        function launchConfetti() {
+            const emojis = ['🌟', '🐟', '🌊', '🏆', '🎉'];
+            for(let i=0; i<30; i++) {
+                const conf = document.createElement('div');
+                conf.innerText = emojis[Math.floor(Math.random()*emojis.length)];
+                conf.style.position = 'fixed';
+                conf.style.left = Math.random() * 100 + 'vw';
+                conf.style.top = '-50px';
+                conf.style.fontSize = (Math.random() * 20 + 20) + 'px';
+                conf.style.zIndex = '9999';
+                conf.style.transition = 'top 3s ease-in, transform 3s ease-out';
+                conf.style.transform = `rotate(${Math.random() * 360}deg)`;
+                document.body.appendChild(conf);
+
+                setTimeout(() => {
+                    conf.style.top = '120vh';
+                    conf.style.transform = `rotate(${Math.random() * 360 + 360}deg)`;
+                }, 50);
+
+                setTimeout(() => {
+                    conf.remove();
+                }, 3100);
+            }
+        }
+
+    </script>
+</body>
+</html>
